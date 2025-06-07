@@ -18,6 +18,11 @@ services:
     devices:
       - /dev/i2c-1:/dev/i2c-1
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   fortuna:
     build:
@@ -38,6 +43,11 @@ services:
     depends_on:
       - controller
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   api:
     build:
@@ -58,17 +68,24 @@ services:
       - controller
       - fortuna
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   duckdb:
     image: datacatering/duckdb:v1.3.0
     volumes:
-      - trng-data:/data/trng
-      - fortuna-data:/data/fortuna
-      - api-data:/data/api
+      - trng-data:/data
+      - fortuna-data:/data
+      - api-data:/data
     command: ["--data", "/data"]
     ports:
       - "1527:1527"
     restart: unless-stopped
+    # Note: DuckDB is typically used as an embedded DB. Consider alternatives
+    # like PostgreSQL if you need a client-server database architecture.
 
 volumes:
   trng-data:

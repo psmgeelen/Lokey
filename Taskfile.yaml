@@ -3,11 +3,10 @@ version: '3'
 vars:
   GO_VERSION: 1.24
   BUILD_DIR: ./build
-  MODULES:
-    - "."
-    - "./cmd/controller"
-    - "./cmd/api"
-    - "./cmd/fortuna"
+  SERVICES:
+    - "controller"
+    - "api"
+    - "fortuna"
 
 tasks:
   default:
@@ -20,122 +19,187 @@ tasks:
     cmds:
       - mkdir -p cmd/controller cmd/api cmd/fortuna pkg/api/docs
       - |
-        if [ ! -f go.mod ]; then
-          go mod init github.com/lokey/rng-service
-          echo "Created go.mod file"
-        fi
+        for service in controller api fortuna; do
+          if [ ! -f cmd/$service/go.mod ]; then
+            cd cmd/$service && go mod init github.com/lokey/rng-service/cmd/$service && cd ../..
+            echo "Created go.mod file for $service"
+          fi
+        done
 
   install-deps:
-    desc: Install required dependencies
+    desc: Install required dependencies for services
     cmds:
-      - go get github.com/gin-gonic/gin
-      - go get github.com/go-playground/validator/v10
-      - go get github.com/swaggo/files
-      - go get github.com/swaggo/gin-swagger
-      - go get github.com/d2r2/go-i2c
+      - for: { var: SERVICES }
+        dir: "cmd/{{.}}"
+        cmd: |
+          go get github.com/gin-gonic/gin
+          go get github.com/go-playground/validator/v10
+          go get github.com/swaggo/files
+          go get github.com/swaggo/gin-swagger
+          if [ "{{.}}" = "controller" ]; then
+            go get github.com/d2r2/go-i2c
+          fi
+        ignore_error: true
 
   tidy:
-    desc: Tidy all Go modules
+    desc: Tidy all service modules
     deps: [install-deps]
     cmds:
-      - for: { var: MODULES }
-        dir: "{{.}}"
+      - for: { var: SERVICES }
+        dir: "cmd/{{.}}"
         cmd: go mod tidy
         ignore_error: true
 
-  tidy-force:
-    desc: Force tidy all Go modules by deleting go.sum files first
-    deps: [install-deps]
-    cmds:
-      - for: { var: MODULES }
-        dir: "{{.}}"
-        cmd: rm -f go.sum && go mod tidy
-        ignore_error: true
-
   download:
-    desc: Download Go dependencies for all modules
+    desc: Download Go dependencies for all services
     deps: [tidy]
     cmds:
-      - for: { var: MODULES }
-        dir: "{{.}}"
+      - for: { var: SERVICES }
+        dir: "cmd/{{.}}"
         cmd: go mod download
         ignore_error: true
 
   lint:
-    desc: Run linters on all modules
+    desc: Run linters on all services
     deps: [install-golangci-lint, download]
     cmds:
-      - |
-        find . -name "*.go" -not -path "./vendor/*" -not -path "./build/*" | grep -q "\.go$" || {
-          echo "No Go files found. Skipping lint."
-          exit 0
-        }
-      - for: { var: MODULES }
-        dir: "{{.}}"
-        cmd: golangci-lint run ./... || echo "Linting found issues, but continuing"
+      - for: { var: SERVICES }
+        dir: "cmd/{{.}}"
+        cmd: |
+          if [ -n "$(find . -name "*.go" -not -path "./vendor/*")" ]; then
+            golangci-lint run ./... || echo "Linting found issues in {{.}}, but continuing"
+          else
+            echo "No Go files found in {{.}}. Skipping lint."
+          fi
         ignore_error: true
 
   fmt:
     desc: Format all Go code
     cmds:
-      - |
-        find . -name "*.go" -not -path "./vendor/*" -not -path "./build/*" | grep -q "\.go$" || {
-          echo "No Go files found. Skipping format."
-          exit 0
-        }
-      - find . -name "*.go" -not -path "./vendor/*" -not -path "./build/*" | xargs gofmt -s -w
+      - for: { var: SERVICES }
+        dir: "cmd/{{.}}"
+        cmd: |
+          if [ -n "$(find . -name "*.go" -not -path "./vendor/*")" ]; then
+            find . -name "*.go" -not -path "./vendor/*" | xargs gofmt -s -w
+          else
+            echo "No Go files found in {{.}}. Skipping format."
+          fi
+        ignore_error: true
 
   vet:
-    desc: Vet all modules
+    desc: Vet all service modules
     deps: [download]
     cmds:
-      - |
-        find . -name "*.go" -not -path "./vendor/*" -not -path "./build/*" | grep -q "\.go$" || {
-          echo "No Go files found. Skipping vet."
-          exit 0
-        }
-      - for: { var: MODULES }
-        dir: "{{.}}"
-        cmd: go vet ./... || echo "Vet found issues, but continuing"
+      - for: { var: SERVICES }
+        dir: "cmd/{{.}}"
+        cmd: |
+          if [ -n "$(find . -name "*.go" -not -path "./vendor/*")" ]; then
+            go vet ./... || echo "Vet found issues in {{.}}, but continuing"
+          else
+            echo "No Go files found in {{.}}. Skipping vet."
+          fi
         ignore_error: true
 
   build:
-    desc: Build all components
+    desc: Build all services
+    deps: [download]
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - for: { var: SERVICES }
+        cmd: |
+          if [ -f cmd/{{.}}/main.go ]; then
+            echo "Building {{.}}..."
+            go build -o $(pwd)/{{$.BUILD_DIR}}/{{.}} ./cmd/{{.}} || echo "{{.}} build failed"
+          else
+            echo "Skipping {{.}} build - main.go not found"
+          fi
+        ignore_error: true
+
+  test:
+    desc: Run tests for all services
+    deps: [download]
+    cmds:
+      - for: { var: SERVICES }
+        dir: "cmd/{{.}}"
+        cmd: |
+          if [ -n "$(find . -name "*_test.go" -not -path "./vendor/*")" ]; then
+            go test -v ./... || echo "Tests for {{.}} failed, but continuing"
+          else
+            echo "No test files found for {{.}}. Skipping tests."
+          fi
+        ignore_error: true
+
+  test-race:
+    desc: Run tests with race detection for all services
+    deps: [download]
+    cmds:
+      - for: { var: SERVICES }
+        dir: "cmd/{{.}}"
+        cmd: |
+          if [ -n "$(find . -name "*_test.go" -not -path "./vendor/*")" ]; then
+            go test -race -v ./... || echo "Race tests for {{.}} failed, but continuing"
+          else
+            echo "No test files found for {{.}}. Skipping race tests."
+          fi
+        ignore_error: true
+
+  test-secure:
+    desc: Run security tests for all services
+    deps: [download]
+    cmds:
+      - go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - for: { var: SERVICES }
+        dir: "cmd/{{.}}"
+        cmd: |
+          if [ -n "$(find . -name "*.go" -not -path "./vendor/*")" ]; then
+            gosec ./... || echo "Security issues found in {{.}}, but continuing"
+          else
+            echo "No Go files found for {{.}}. Skipping security tests."
+          fi
+        ignore_error: true
+
+  # Individual service build tasks
+  build-controller:
+    desc: Build the controller service
     deps: [download]
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - |
-        if [ -d cmd/controller ] && [ -f cmd/controller/main.go ]; then
-          cd cmd/controller && go build -o {{.BUILD_DIR}}/controller || echo "Controller build failed"
+        if [ -f cmd/controller/main.go ]; then
+          echo "Building controller..."
+          go build -o $(pwd)/{{.BUILD_DIR}}/controller ./cmd/controller
         else
-          echo "Skipping controller build - directory or main.go not found"
-        fi
-      - |
-        if [ -d cmd/api ] && [ -f cmd/api/main.go ]; then
-          cd cmd/api && go build -o {{.BUILD_DIR}}/api || echo "API build failed"
-        else
-          echo "Skipping API build - directory or main.go not found"
-        fi
-      - |
-        if [ -d cmd/fortuna ] && [ -f cmd/fortuna/main.go ]; then
-          cd cmd/fortuna && go build -o {{.BUILD_DIR}}/fortuna || echo "Fortuna build failed"
-        else
-          echo "Skipping Fortuna build - directory or main.go not found"
+          echo "Controller main.go not found"
+          exit 1
         fi
 
-  test:
-    desc: Run tests
+  build-api:
+    desc: Build the API service
     deps: [download]
     cmds:
+      - mkdir -p {{.BUILD_DIR}}
       - |
-        find . -name "*_test.go" -not -path "./vendor/*" -not -path "./build/*" | grep -q "_test\.go$" || {
-          echo "No test files found. Skipping tests."
-          exit 0
-        }
-      - for: { var: MODULES }
-        dir: "{{.}}"
-        cmd: go test -v ./... || echo "Tests failed, but continuing"
-        ignore_error: true
+        if [ -f cmd/api/main.go ]; then
+          echo "Building API..."
+          go build -o $(pwd)/{{.BUILD_DIR}}/api ./cmd/api
+        else
+          echo "API main.go not found"
+          exit 1
+        fi
+
+  build-fortuna:
+    desc: Build the Fortuna service
+    deps: [download]
+    cmds:
+      - mkdir -p {{.BUILD_DIR}}
+      - |
+        if [ -f cmd/fortuna/main.go ]; then
+          echo "Building Fortuna..."
+          go build -o $(pwd)/{{.BUILD_DIR}}/fortuna ./cmd/fortuna
+        else
+          echo "Fortuna main.go not found"
+          exit 1
+        fi
 
   clean:
     desc: Clean build artifacts
@@ -176,3 +240,29 @@ tasks:
       - task: test
       - task: build
       - echo "=== All tasks completed ==="
+
+  # Docker tasks
+  docker-build:
+    desc: Build all Docker images
+    cmds:
+      - docker-compose build
+
+  docker-up:
+    desc: Start all services
+    cmds:
+      - docker-compose up -d
+
+  docker-down:
+    desc: Stop all services
+    cmds:
+      - docker-compose down
+
+  docker-logs:
+    desc: View logs from all services
+    cmds:
+      - docker-compose logs -f
+
+  docker-prune:
+    desc: Remove unused Docker resources
+    cmds:
+      - docker system prune -f

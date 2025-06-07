@@ -1,3 +1,4 @@
+# Multi-stage build for Controller service
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
@@ -9,23 +10,23 @@ COPY cmd/controller/go.mod cmd/controller/go.sum ./cmd/controller/
 # Download dependencies
 RUN go mod download && cd cmd/controller && go mod download
 
-# Copy the rest of the source code
+# Copy source code
 COPY . .
 
 # Build the application
-RUN cd cmd/controller && CGO_ENABLED=1 GOOS=linux go build -o /app/controller
+RUN cd cmd/controller && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o controller .
 
-# Create a smaller runtime image
+# Final stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates libc6-compat
+RUN apk --no-cache add ca-certificates i2c-tools
 
 WORKDIR /app
 
-# Copy the binary from the builder stage
-COPY --from=builder /app/controller /app/controller
+# Copy the binary from builder
+COPY --from=builder /app/cmd/controller/controller .
 
-# Create data directory
+# Create directory for database
 RUN mkdir -p /data
 
 # Set environment variables
@@ -35,8 +36,8 @@ ENV PORT=8081 \
     HASH_INTERVAL_MS=1000 \
     TRNG_QUEUE_SIZE=100
 
-# Expose the port
+# Expose port
 EXPOSE 8081
 
-# Run the application
-CMD ["/app/controller"]
+# Run the service
+CMD ["./controller"]

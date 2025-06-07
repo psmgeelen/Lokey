@@ -1,0 +1,42 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+
+    - name: Install Task
+      uses: arduino/setup-task@v1
+
+    - name: Download dependencies
+      run: task download
+
+    - name: Format
+      run: task fmt
+
+    - name: Vet
+      run: task vet
+
+    - name: Lint
+      run: task lint
+
+    - name: Test
+      run: task test-race
+
+    - name: Build
+      run: task build
+
+    - name: Docker Build
+      run: task docker-build

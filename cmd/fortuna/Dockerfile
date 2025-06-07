@@ -1,31 +1,32 @@
+# Multi-stage build for Fortuna service
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
 # Copy the module files first to leverage Docker cache
 COPY go.mod go.sum ./
-COPY cmd/fortuna/go.mod cmd/fortuna/go.sum* ./cmd/fortuna/
+COPY cmd/fortuna/go.mod cmd/fortuna/go.sum ./cmd/fortuna/
 
 # Download dependencies
 RUN go mod download && cd cmd/fortuna && go mod download
 
-# Copy the rest of the source code
+# Copy source code
 COPY . .
 
 # Build the application
-RUN cd cmd/fortuna && CGO_ENABLED=1 GOOS=linux go build -o /app/fortuna
+RUN cd cmd/fortuna && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o fortuna .
 
-# Create a smaller runtime image
+# Final stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates libc6-compat
+RUN apk --no-cache add ca-certificates
 
 WORKDIR /app
 
-# Copy the binary from the builder stage
-COPY --from=builder /app/fortuna /app/fortuna
+# Copy the binary from builder
+COPY --from=builder /app/cmd/fortuna/fortuna .
 
-# Create data directory
+# Create directory for database
 RUN mkdir -p /data
 
 # Set environment variables
@@ -37,8 +38,8 @@ ENV PORT=8082 \
     AMPLIFICATION_FACTOR=4 \
     SEED_COUNT=3
 
-# Expose the port
+# Expose port
 EXPOSE 8082
 
-# Run the application
-CMD ["/app/fortuna"]
+# Run the service
+CMD ["./fortuna"]

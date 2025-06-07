@@ -1,32 +1,34 @@
+# Multi-stage build for API service
 FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
 # Copy the module files first to leverage Docker cache
 COPY go.mod go.sum ./
-COPY cmd/api/go.mod cmd/api/go.sum* ./cmd/api/
+COPY cmd/api/go.mod cmd/api/go.sum ./cmd/api/
 
 # Download dependencies
 RUN go mod download && cd cmd/api && go mod download
 
-# Copy the rest of the source code
+# Copy source code
 COPY . .
 
 # Build the application
-RUN cd cmd/api && CGO_ENABLED=1 GOOS=linux go build -o /app/api
+RUN cd cmd/api && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o api .
 
-# Create a smaller runtime image
+# Final stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates libc6-compat
+RUN apk --no-cache add ca-certificates
 
 WORKDIR /app
 
-# Copy the binary from the builder stage
-COPY --from=builder /app/api /app/api
+# Copy the binary from builder
+COPY --from=builder /app/cmd/api/api .
 
-# Create data directory
-RUN mkdir -p /data
+# Create directory for database and swagger docs
+RUN mkdir -p /data /app/swagger
+COPY pkg/api/docs /app/swagger
 
 # Set environment variables
 ENV PORT=8080 \
@@ -36,8 +38,8 @@ ENV PORT=8080 \
     TRNG_QUEUE_SIZE=100 \
     FORTUNA_QUEUE_SIZE=100
 
-# Expose the port
+# Expose port
 EXPOSE 8080
 
-# Run the application
-CMD ["/app/api"]
+# Run the service
+CMD ["./api"]
