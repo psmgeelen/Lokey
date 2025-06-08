@@ -4,11 +4,17 @@ FROM golang:1.24-alpine AS builder
 WORKDIR /app
 
 # Copy the module files first to leverage Docker cache
-COPY go.mod go.sum ./
-COPY cmd/controller/go.mod cmd/controller/go.sum ./cmd/controller/
+COPY pkg/go.mod pkg/go.sum* ./pkg/
+COPY cmd/controller/go.mod cmd/controller/go.sum* ./cmd/controller/
 
-# Download dependencies
-RUN go mod download && cd cmd/controller && go mod download
+# Create an empty go.mod in the root to make the build work
+RUN echo "module github.com/lokey/rng-service\ngo 1.24" > go.mod
+
+# Download dependencies for pkg module
+RUN cd pkg && go mod tidy || true
+
+# Download dependencies for controller module
+RUN cd cmd/controller && go mod tidy || true
 
 # Copy source code
 COPY . .

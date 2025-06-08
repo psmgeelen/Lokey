@@ -1,5 +1,25 @@
 module github.com/lokey/rng-service/cmd/api
+module github.com/lokey/rng-service/cmd/api
+module github.com/lokey/rng-service/cmd/api
 
+go 1.24
+
+replace github.com/lokey/rng-service => ../../
+
+// Make sure pkg directory is accessible
+replace github.com/lokey/rng-service/pkg => ../../pkg
+
+require (
+	github.com/gin-gonic/gin v1.10.1
+	github.com/lokey/rng-service v0.0.0-00010101000000-000000000000
+	github.com/lokey/rng-service/pkg v0.0.0-00010101000000-000000000000
+)
+go 1.24
+
+replace github.com/lokey/rng-service => ../../
+
+// Make sure pkg directory is accessible
+replace github.com/lokey/rng-service/pkg => ../../pkg
 go 1.24
 
 replace github.com/lokey/rng-service => ../../

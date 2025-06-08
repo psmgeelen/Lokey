@@ -20,8 +20,8 @@ jobs:
     - name: Install Task
       uses: arduino/setup-task@v1
 
-    - name: Download dependencies
-      run: task download
+    - name: Init project modules
+      run: task init
 
     - name: Format
       run: task fmt

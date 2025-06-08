@@ -165,9 +165,17 @@ func (c *Controller) generateAndStoreHash() {
 		return
 	}
 
-	log.Printf("Generated hash: %s", hex.EncodeToString(hash))
+	// Determine source based on mock mode
+	source := "hardware"
+	if c.device.IsMockMode() {
+		source = "software"
+		log.Printf("Generated SOFTWARE random hash: %s", hex.EncodeToString(hash))
+	} else {
+		log.Printf("Generated HARDWARE random hash: %s", hex.EncodeToString(hash))
+	}
 
-	err = c.db.StoreTRNGHash(hash)
+	// Store with source information
+	err = c.db.StoreTRNGHash(hash, source)
 	if err != nil {
 		log.Printf("Failed to store hash: %v", err)
 	}
@@ -201,11 +209,29 @@ func (c *Controller) infoHandler(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
+	// Get source stats if detailed=true query parameter is present
+	detailed := ctx.DefaultQuery("detailed", "false") == "true"
+	var sourceStats map[string]interface{}
+	if detailed {
+		sourceStats, err = c.db.GetSourceStats()
+		if err != nil {
+			log.Printf("Failed to get source stats: %v", err)
+		}
+	}
+
+	response := gin.H{
 		"status":           "running",
 		"hash_interval_ms": c.hashInterval.Milliseconds(),
+		"mock_mode":        c.device.IsMockMode(),
+		"source":           map[string]bool{"hardware": !c.device.IsMockMode(), "software": c.device.IsMockMode()},
 		"stats":            stats,
-	})
+	}
+
+	if detailed && sourceStats != nil {
+		response["source_stats"] = sourceStats
+	}
+
+	ctx.JSON(http.StatusOK, response)
 }
 
 func (c *Controller) generateHashHandler(ctx *gin.Context) {
@@ -215,7 +241,13 @@ func (c *Controller) generateHashHandler(ctx *gin.Context) {
 		return
 	}
 
-	err = c.db.StoreTRNGHash(hash)
+	// Determine source based on mock mode
+	source := "hardware"
+	if c.device.IsMockMode() {
+		source = "software"
+	}
+
+	err = c.db.StoreTRNGHash(hash, source)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store hash"})
 		return
@@ -228,6 +260,14 @@ func (c *Controller) generateHashHandler(ctx *gin.Context) {
 
 func main() {
 	// Read configuration from environment variables
+
+	// Check for forced mock mode for testing
+	forceMockMode := false
+	if val, ok := os.LookupEnv("FORCE_MOCK_MODE"); ok && (val == "1" || val == "true") {
+		forceMockMode = true
+		log.Println("FORCE_MOCK_MODE enabled. Will use software random generation.")
+	}
+
 	i2cBusNumber := DefaultI2CBusNumber
 	if val, ok := os.LookupEnv("I2C_BUS_NUMBER"); ok {
 		if n, err := fmt.Sscanf(val, "%d", &i2cBusNumber); n != 1 || err != nil {
@@ -267,9 +307,39 @@ func main() {
 	}
 
 	// Create and start controller
-	controller, err := NewController(i2cBusNumber, dbPath, port, hashInterval, trngQueueSize)
-	if err != nil {
-		log.Fatalf("Failed to create controller: %v", err)
+	var controller *Controller
+	var err error
+
+	if forceMockMode {
+		// Use the ATECC608A controller with forced mock mode
+		device, err := atecc608a.NewControllerWithMockMode(i2cBusNumber, true)
+		if err != nil {
+			log.Fatalf("Failed to create mock controller: %v", err)
+		}
+
+		// Initialize database
+		db, err := database.NewDuckDBHandler(dbPath, trngQueueSize, 0)
+		if err != nil {
+			device.Close()
+			log.Fatalf("Failed to initialize database: %v", err)
+		}
+
+		// Initialize router
+		router := gin.Default()
+
+		controller = &Controller{
+			device:       device,
+			db:           db,
+			port:         port,
+			hashInterval: hashInterval,
+			router:       router,
+			running:      false,
+		}
+	} else {
+		controller, err = NewController(i2cBusNumber, dbPath, port, hashInterval, trngQueueSize)
+		if err != nil {
+			log.Fatalf("Failed to create controller: %v", err)
+		}
 	}
 
 	log.Printf("Starting TRNG controller with configuration:")

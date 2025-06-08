@@ -12,7 +12,9 @@ services:
       - I2C_BUS_NUMBER=1
       - DB_PATH=/data/trng.db
       - HASH_INTERVAL_MS=1000
-      - TRNG_QUEUE_SIZE=100
+      - TRNG_QUEUE_SIZE=1000  # Increased for better performance
+      - FORCE_MOCK_MODE=${FORCE_MOCK_MODE:-}  # Set to 1 to force software mode
+      - DUCKDB_MEMORY_LIMIT=128MB
     volumes:
       - trng-data:/data
     devices:
@@ -35,9 +37,11 @@ services:
       - DB_PATH=/data/fortuna.db
       - CONTROLLER_URL=http://controller:8081
       - PROCESS_INTERVAL_MS=5000
-      - FORTUNA_QUEUE_SIZE=100
+      - FORTUNA_QUEUE_SIZE=1000  # Increased for better performance
       - AMPLIFICATION_FACTOR=4
       - SEED_COUNT=3
+      - BATCH_SIZE=50  # Process in batches for efficiency
+      - DUCKDB_MEMORY_LIMIT=128MB
     volumes:
       - fortuna-data:/data
     depends_on:
@@ -60,8 +64,10 @@ services:
       - DB_PATH=/data/api.db
       - CONTROLLER_ADDR=http://controller:8081
       - FORTUNA_ADDR=http://fortuna:8082
-      - TRNG_QUEUE_SIZE=100
-      - FORTUNA_QUEUE_SIZE=100
+      - TRNG_QUEUE_SIZE=1000  # Increased for better performance
+      - FORTUNA_QUEUE_SIZE=1000  # Increased for better performance
+      - RETENTION_DAYS=30  # Keep data for 30 days max
+      - DUCKDB_MEMORY_LIMIT=256MB
     volumes:
       - api-data:/data
     depends_on:
@@ -74,18 +80,8 @@ services:
       timeout: 10s
       retries: 3
 
-  duckdb:
-    image: datacatering/duckdb:v1.3.0
-    volumes:
-      - trng-data:/data
-      - fortuna-data:/data
-      - api-data:/data
-    command: ["--data", "/data"]
-    ports:
-      - "1527:1527"
-    restart: unless-stopped
-    # Note: DuckDB is typically used as an embedded DB. Consider alternatives
-    # like PostgreSQL if you need a client-server database architecture.
+      # DuckDB is used as an embedded database within each service
+      # No separate DuckDB service is needed
 
 volumes:
   trng-data:

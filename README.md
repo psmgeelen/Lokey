@@ -100,6 +100,30 @@ docker-compose up -d
 4. Access the API at http://localhost:8080
 5. View API documentation at http://localhost:8080/swagger/index.html
 
+### Running Without Hardware (Testing Mode)
+
+You can run the system without the ATECC608A hardware using mock mode:
+
+```bash
+# Using Taskfile (recommended)
+task run-mock
+
+# Or using Docker Compose
+task docker-up-mock
+```
+
+The system will also automatically detect if hardware is unavailable and fall back to software mode:
+
+```bash
+# Auto-detection (will use hardware if available, otherwise mock mode)
+task run-local
+```
+
+In mock mode:
+- The system uses Go's crypto/rand for software random generation
+- All features work normally, with data marked as "software" source
+- The API includes source information so you know which data is hardware vs software generated
+
 ## Hardware
 
 Lokey uses minimal hardware to achieve its goals:
@@ -142,8 +166,17 @@ task docker-build
 # Start all services
 task docker-up
 
+# Start all services in mock mode (no hardware)
+task docker-up-mock
+
 # Stop all services
 task docker-down
+
+# Run locally with hardware detection
+task run-local
+
+# Run locally in mock mode
+task run-mock
 ```
 
 ### Building from Source Manually

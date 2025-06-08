@@ -19,10 +19,28 @@ tasks:
     cmds:
       - mkdir -p cmd/controller cmd/api cmd/fortuna pkg/api/docs
       - |
+        # Initialize pkg module if it doesn't exist
+        if [ ! -f pkg/go.mod ]; then
+          cd pkg && go mod init github.com/lokey/rng-service/pkg && cd ..
+          echo "Created go.mod file for pkg"
+        fi
+
+        # Initialize service modules
         for service in controller api fortuna; do
           if [ ! -f cmd/$service/go.mod ]; then
             cd cmd/$service && go mod init github.com/lokey/rng-service/cmd/$service && cd ../..
             echo "Created go.mod file for $service"
+          fi
+
+          # Add replace directives to service modules
+          if ! grep -q "replace github.com/lokey/rng-service => ../../" cmd/$service/go.mod; then
+            echo "\nreplace github.com/lokey/rng-service => ../../" >> cmd/$service/go.mod
+            echo "Added root module replace directive to $service"
+          fi
+
+          if ! grep -q "replace github.com/lokey/rng-service/pkg => ../../pkg" cmd/$service/go.mod; then
+            echo "\nreplace github.com/lokey/rng-service/pkg => ../../pkg" >> cmd/$service/go.mod
+            echo "Added pkg module replace directive to $service"
           fi
         done
 
@@ -42,9 +60,13 @@ tasks:
         ignore_error: true
 
   tidy:
-    desc: Tidy all service modules
+    desc: Tidy all modules including pkg
     deps: [install-deps]
     cmds:
+      # Tidy pkg module first
+      - cd pkg && go mod tidy || echo "Failed to tidy pkg module, but continuing"
+
+      # Then tidy service modules
       - for: { var: SERVICES }
         dir: "cmd/{{.}}"
         cmd: go mod tidy
@@ -102,14 +124,13 @@ tasks:
 
   build:
     desc: Build all services
-    deps: [download]
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - for: { var: SERVICES }
         cmd: |
           if [ -f cmd/{{.}}/main.go ]; then
             echo "Building {{.}}..."
-            go build -o $(pwd)/{{$.BUILD_DIR}}/{{.}} ./cmd/{{.}} || echo "{{.}} build failed"
+            cd cmd/{{.}} && go mod tidy && go build -o ../../{{$.BUILD_DIR}}/{{.}} . && cd ../.. || echo "{{.}} build failed"
           else
             echo "Skipping {{.}} build - main.go not found"
           fi
@@ -117,7 +138,6 @@ tasks:
 
   test:
     desc: Run tests for all services
-    deps: [download]
     cmds:
       - for: { var: SERVICES }
         dir: "cmd/{{.}}"
@@ -131,7 +151,6 @@ tasks:
 
   test-race:
     desc: Run tests with race detection for all services
-    deps: [download]
     cmds:
       - for: { var: SERVICES }
         dir: "cmd/{{.}}"
@@ -161,13 +180,12 @@ tasks:
   # Individual service build tasks
   build-controller:
     desc: Build the controller service
-    deps: [download]
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - |
         if [ -f cmd/controller/main.go ]; then
           echo "Building controller..."
-          go build -o $(pwd)/{{.BUILD_DIR}}/controller ./cmd/controller
+          cd cmd/controller && go mod tidy && go build -o ../../{{.BUILD_DIR}}/controller . && cd ../..
         else
           echo "Controller main.go not found"
           exit 1
@@ -175,13 +193,12 @@ tasks:
 
   build-api:
     desc: Build the API service
-    deps: [download]
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - |
         if [ -f cmd/api/main.go ]; then
           echo "Building API..."
-          go build -o $(pwd)/{{.BUILD_DIR}}/api ./cmd/api
+          cd cmd/api && go mod tidy && go build -o ../../{{.BUILD_DIR}}/api . && cd ../..
         else
           echo "API main.go not found"
           exit 1
@@ -189,13 +206,12 @@ tasks:
 
   build-fortuna:
     desc: Build the Fortuna service
-    deps: [download]
     cmds:
       - mkdir -p {{.BUILD_DIR}}
       - |
         if [ -f cmd/fortuna/main.go ]; then
           echo "Building Fortuna..."
-          go build -o $(pwd)/{{.BUILD_DIR}}/fortuna ./cmd/fortuna
+          cd cmd/fortuna && go mod tidy && go build -o ../../{{.BUILD_DIR}}/fortuna . && cd ../..
         else
           echo "Fortuna main.go not found"
           exit 1
@@ -230,10 +246,7 @@ tasks:
     cmds:
       - echo "=== Starting all tasks ==="
       - task: init
-      - task: install-deps
       - task: clean
-      - task: tidy
-      - task: download
       - task: fmt
       - task: vet
       - task: lint
@@ -252,6 +265,11 @@ tasks:
     cmds:
       - docker-compose up -d
 
+  docker-up-mock:
+    desc: Start all services in mock mode (no hardware required)
+    cmds:
+      - FORCE_MOCK_MODE=1 docker-compose up -d
+
   docker-down:
     desc: Stop all services
     cmds:
@@ -261,6 +279,114 @@ tasks:
     desc: View logs from all services
     cmds:
       - docker-compose logs -f
+
+  run-mock:
+    desc: Run services in mock mode (no hardware required)
+    cmds:
+      - mkdir -p ./data
+      - |
+        # Kill previous instances if running
+        pkill -f "build/controller" || true
+        pkill -f "build/fortuna" || true
+        pkill -f "build/api" || true
+
+        # Build each component separately in its own directory
+        echo "Building controller..."
+        cd cmd/controller && go mod tidy && go build -o ../../build/controller . && cd ../.. || exit 1
+
+        echo "Building fortuna..."
+        cd cmd/fortuna && go mod tidy && go build -o ../../build/fortuna . && cd ../.. || exit 1
+
+        echo "Building api..."
+        cd cmd/api && go mod tidy && go build -o ../../build/api . && cd ../.. || exit 1
+
+        # Start services with mock mode
+        FORCE_MOCK_MODE=1 ./build/controller \
+          --port=8081 \
+          --i2c-bus-number=1 \
+          --db-path=./data/trng.db \
+          --hash-interval-ms=1000 \
+          --trng-queue-size=1000 & 
+        echo "Controller started in mock mode"
+        sleep 2
+
+        ./build/fortuna \
+          --port=8082 \
+          --db-path=./data/fortuna.db \
+          --controller-url=http://localhost:8081 \
+          --process-interval-ms=5000 \
+          --fortuna-queue-size=1000 \
+          --amplification-factor=4 \
+          --seed-count=3 &
+        echo "Fortuna started"
+        sleep 1
+
+        ./build/api \
+          --port=8080 \
+          --db-path=./data/api.db \
+          --controller-addr=http://localhost:8081 \
+          --fortuna-addr=http://localhost:8082 \
+          --trng-queue-size=1000 \
+          --fortuna-queue-size=1000 &
+        echo "API started, available at http://localhost:8080"
+
+        echo "\nAll services running in mock mode. Press Ctrl+C to stop"
+        wait
+    ignore_error: true
+
+  run-local:
+    desc: Run services with hardware detection (falls back to mock if needed)
+    cmds:
+      - mkdir -p ./data
+      - |
+        # Kill previous instances if running
+        pkill -f "build/controller" || true
+        pkill -f "build/fortuna" || true
+        pkill -f "build/api" || true
+
+        # Build each component separately in its own directory
+        echo "Building controller..."
+        cd cmd/controller && go mod tidy && go build -o ../../build/controller . && cd ../.. || exit 1
+
+        echo "Building fortuna..."
+        cd cmd/fortuna && go mod tidy && go build -o ../../build/fortuna . && cd ../.. || exit 1
+
+        echo "Building api..."
+        cd cmd/api && go mod tidy && go build -o ../../build/api . && cd ../.. || exit 1
+
+        # Start services with auto-detection
+        ./build/controller \
+          --port=8081 \
+          --i2c-bus-number=1 \
+          --db-path=./data/trng.db \
+          --hash-interval-ms=1000 \
+          --trng-queue-size=1000 & 
+        echo "Controller started"
+        sleep 2
+
+        ./build/fortuna \
+          --port=8082 \
+          --db-path=./data/fortuna.db \
+          --controller-url=http://localhost:8081 \
+          --process-interval-ms=5000 \
+          --fortuna-queue-size=1000 \
+          --amplification-factor=4 \
+          --seed-count=3 &
+        echo "Fortuna started"
+        sleep 1
+
+        ./build/api \
+          --port=8080 \
+          --db-path=./data/api.db \
+          --controller-addr=http://localhost:8081 \
+          --fortuna-addr=http://localhost:8082 \
+          --trng-queue-size=1000 \
+          --fortuna-queue-size=1000 &
+        echo "API started, available at http://localhost:8080"
+
+        echo "\nAll services running. Press Ctrl+C to stop"
+        wait
+    ignore_error: true
 
   docker-prune:
     desc: Remove unused Docker resources
