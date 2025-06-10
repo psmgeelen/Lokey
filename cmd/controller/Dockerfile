@@ -1,5 +1,10 @@
 # Multi-stage build for Controller service
-FROM golang:1.24-alpine AS builder
+FROM golang:1.24-bullseye AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    gcc g++ libc6-dev pkg-config linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -19,13 +24,16 @@ RUN cd cmd/controller && go mod tidy || true
 # Copy source code
 COPY . .
 
-# Build the application
-RUN cd cmd/controller && CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o controller .
+# Build the application with CGO enabled
+RUN cd cmd/controller && CGO_ENABLED=1 GOOS=linux go build -a -o controller .
 
 # Final stage
-FROM alpine:latest
+FROM debian:bullseye-slim
 
-RUN apk --no-cache add ca-certificates i2c-tools
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    i2c-tools \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

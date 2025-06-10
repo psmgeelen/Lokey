@@ -228,8 +228,8 @@ func (p *FortunaProcessor) processAndAmplify() {
 		return
 	}
 
-	// Store amplified data
-	err = p.db.StoreFortunaData(amplifiedData)
+	// Store amplified data using the newer method
+	err = p.db.StoreFortunaData(amplifiedData, len(combinedSeed), p.amplificationFactor)
 	if err != nil {
 		log.Printf("Failed to store Fortuna data: %v", err)
 		return
@@ -325,8 +325,8 @@ func (p *FortunaProcessor) generateDataHandler(ctx *gin.Context) {
 		return
 	}
 
-	// Store the generated data
-	err = p.db.StoreFortunaData(data)
+	// Store the generated data using the newer method with appropriate parameters
+	err = p.db.StoreFortunaData(data, size, 1) // amplification factor of 1 for direct generation
 	if err != nil {
 		log.Printf("Warning: failed to store generated data: %v", err)
 		// Continue anyway to return the data to the client

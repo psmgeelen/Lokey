@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math"
@@ -44,13 +45,13 @@ func (d *DuckDBHandler) setupTables() error {
 	// Create TRNG data table with improved schema
 	_, err := d.db.Exec(`
 		CREATE TABLE IF NOT EXISTS trng_data (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id INTEGER PRIMARY KEY,
 			hash BLOB NOT NULL,
+			hash_hex VARCHAR(64) NOT NULL,
 			timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			consumed BOOLEAN DEFAULT FALSE,
 			source VARCHAR(20) DEFAULT 'hardware',
-			chunk_size INTEGER DEFAULT 32,
-			hash_hex VARCHAR(64) GENERATED ALWAYS AS (ENCODE(hash, 'hex')) STORED
+			chunk_size INTEGER DEFAULT 32
 		)
 	`)
 	if err != nil {
@@ -60,7 +61,7 @@ func (d *DuckDBHandler) setupTables() error {
 	// Create Fortuna data table with improved schema
 	_, err = d.db.Exec(`
 		CREATE TABLE IF NOT EXISTS fortuna_data (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			id INTEGER PRIMARY KEY,
 			data BLOB NOT NULL,
 			timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			consumed BOOLEAN DEFAULT FALSE,
@@ -109,6 +110,9 @@ func (d *DuckDBHandler) StoreTRNGHash(hash []byte, source string) error {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 
+	// Generate hex representation
+	hashHex := hex.EncodeToString(hash)
+
 	// Use batched insertions for better performance
 	tx, err := d.db.Begin()
 	if err != nil {
@@ -121,7 +125,7 @@ func (d *DuckDBHandler) StoreTRNGHash(hash []byte, source string) error {
 	}()
 
 	// Insert new hash with source information
-	_, err = tx.Exec("INSERT INTO trng_data (hash, source, chunk_size) VALUES (?, ?, 32)", hash, source)
+	_, err = tx.Exec("INSERT INTO trng_data (hash, hash_hex, source, chunk_size) VALUES (?, ?, ?, 32)", hash, hashHex, source)
 	if err != nil {
 		return fmt.Errorf("failed to insert TRNG hash: %w", err)
 	}

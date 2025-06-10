@@ -60,7 +60,7 @@ func main() {
 	}
 
 	// Initialize database
-	db, err := database.NewDuckDBHago ndler(dbPath, trngQueueSize, fortunaQueueSize)
+	db, err := database.NewDuckDBHandler(dbPath, trngQueueSize, fortunaQueueSize)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}

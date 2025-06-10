@@ -2,16 +2,13 @@ package api
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
-	"github.com/lokey/rng-service/pkg/api/docs"
 	"github.com/lokey/rng-service/pkg/database"
 	"github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
